@@ -64,23 +64,10 @@ QQ 音乐 https://y.qq.com
 
 <details><summary>PJAX 页面切换问题？</summary><br>
 
-需要视情况在主题设置中添加回调函数
+当前版本默认使用 `<meting-js>` Custom Element 渲染播放器。  
+在常见的 PJAX 场景下，新页面内容插入后会自动初始化播放器，旧节点移除时也会自动销毁，一般**不需要**再额外添加 `loadMeting()` 一类的重载函数。
 
-### 停止播放
-
-```
-if (typeof aplayers !== 'undefined'){
-    for (var i = 0; i < aplayers.length; i++) {
-        try {aplayers[i].destroy()} catch(e){}
-    }
-}
-```
-
-### 重载播放器
-
-```
-loadMeting();
-```
+如果你的主题对 PJAX 做了额外的 DOM 接管，或自行阻断了自定义元素的正常生命周期，再根据主题行为补充自定义回调即可。
 
 </details>
 
