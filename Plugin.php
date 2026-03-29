@@ -1,4 +1,17 @@
 <?php
+
+namespace TypechoPlugin\Meting;
+
+use Typecho\Common;
+use Typecho\Plugin\PluginInterface;
+use Typecho\Widget\Helper\Form;
+use Typecho\Widget\Helper\Form\Element\Text;
+use Typecho\Widget\Helper\Form\Element\Radio;
+use Typecho\Widget\Helper\Form\Element\Textarea;
+use Utils\Helper;
+use Widget\Options;
+use Widget\Archive;
+
 if (!defined('__TYPECHO_ROOT_DIR__')) {
     exit;
 }
@@ -8,33 +21,33 @@ if (!defined('__TYPECHO_ROOT_DIR__')) {
  *
  * @package APlayer for Typecho | Meting
  * @author METO
- * @version 2.1.2
+ * @version 3.0.0
  * @dependence 14.10.10-*
- * @link https://github.com/MoePlayer/APlayer-Typecho
+ * @link https://github.com/mikusaa/Typecho-Plugin-APlayer
  *
  */
 
-define('METING_VERSION', '2.1.2');
+define('METING_VERSION', '3.0.0');
 
-class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
+class Plugin implements PluginInterface
 {
     /**
      * 激活插件方法,如果激活失败,直接抛出异常
      *
      * @access public
      * @return void
-     * @throws Typecho_Plugin_Exception
+     * @throws \Typecho\Plugin\Exception
      */
     public static function activate()
     {
-        Meting_Plugin::installCheck();
-        Helper::addAction('metingapi', 'Meting_Action');
-        Typecho_Plugin::factory('Widget_Abstract_Contents')->contentEx = array('Meting_Plugin','playerReplace');
-        Typecho_Plugin::factory('Widget_Abstract_Contents')->excerptEx = array('Meting_Plugin','playerReplace');
-        Typecho_Plugin::factory('Widget_Archive')->header = array('Meting_Plugin','header');
-        Typecho_Plugin::factory('Widget_Archive')->footer = array('Meting_Plugin','footer');
-        Typecho_Plugin::factory('admin/write-post.php')->bottom = array('Meting_Plugin', 'addButton');
-        Typecho_Plugin::factory('admin/write-page.php')->bottom = array('Meting_Plugin', 'addButton');
+        self::installCheck();
+        Helper::addAction('metingapi', Action::class);
+        self::registerContentsHook('contentEx', [__CLASS__, 'playerReplace']);
+        self::registerContentsHook('excerptEx', [__CLASS__, 'playerReplace']);
+        \Typecho\Plugin::factory('Widget_Archive')->header = [__CLASS__, 'header'];
+        \Typecho\Plugin::factory('Widget_Archive')->footer = [__CLASS__, 'footer'];
+        \Typecho\Plugin::factory('admin/write-post.php')->bottom = [__CLASS__, 'addButton'];
+        \Typecho\Plugin::factory('admin/write-page.php')->bottom = [__CLASS__, 'addButton'];
     }
 
     /**
@@ -43,7 +56,7 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
      * @static
      * @access public
      * @return void
-     * @throws Typecho_Plugin_Exception
+     * @throws \Typecho\Plugin\Exception
      */
     public static function deactivate()
     {
@@ -54,12 +67,14 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
      * 获取插件配置面板
      *
      * @access public
-     * @param Typecho_Widget_Helper_Form $form 配置面板
+     * @param Form $form 配置面板
      * @return void
      */
-    public static function config(Typecho_Widget_Helper_Form $form)
+    public static function config(Form $form)
     {
-        $t = new Typecho_Widget_Helper_Form_Element_Text(
+        $pluginOptions = Options::alloc()->plugin('Meting');
+
+        $t = new Text(
             'theme',
             null,
             '#ad7a86',
@@ -67,7 +82,7 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
             _t('播放器默认的主题颜色，支持如 #372e21、#75c、red，该设定会被[Meting]标签中的theme属性覆盖，默认为 #ad7a86')
         );
         $form->addInput($t);
-        $t = new Typecho_Widget_Helper_Form_Element_Text(
+        $t = new Text(
             'height',
             null,
             '340px',
@@ -75,7 +90,7 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
             _t('')
         );
         $form->addInput($t);
-        $t = new Typecho_Widget_Helper_Form_Element_Radio(
+        $t = new Radio(
             'autoplay',
             array('true' => _t('是'),'false' => _t('否')),
             'false',
@@ -83,7 +98,7 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
             _t('')
         );
         $form->addInput($t);
-        $t = new Typecho_Widget_Helper_Form_Element_Radio(
+        $t = new Radio(
             'order',
             array('list' => _t('列表'), 'random' => _t('随机')),
             'list',
@@ -91,7 +106,7 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
             _t('')
         );
         $form->addInput($t);
-        $t = new Typecho_Widget_Helper_Form_Element_Radio(
+        $t = new Radio(
             'preload',
             array('auto' => _t('自动'),'none' => _t('不加载'),'metadata' => _t('加载元数据')),
             'auto',
@@ -107,7 +122,7 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
             'mysql' => _t('MySQL'),
             'sqlite' => _t('SQLite')
         );
-        $t = new Typecho_Widget_Helper_Form_Element_Radio(
+        $t = new Radio(
             'cachetype',
             $list,
             'none',
@@ -115,7 +130,7 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
             _t('缓存歌曲解析信息，降低服务器压力')
         );
         $form->addInput($t);
-        $t = new Typecho_Widget_Helper_Form_Element_Text(
+        $t = new Text(
             'cachehost',
             null,
             '127.0.0.1',
@@ -123,7 +138,7 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
             _t('通常为 localhost, 127.0.0.1')
         );
         $form->addInput($t);
-        $t = new Typecho_Widget_Helper_Form_Element_Text(
+        $t = new Text(
             'cacheport',
             null,
             '6379',
@@ -132,7 +147,7 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
         );
         $form->addInput($t);
 
-        $t = new Typecho_Widget_Helper_Form_Element_Radio(
+        $t = new Radio(
             'bitrate',
             array('128' => _t('流畅品质 128K'),'192' => _t('清晰品质 192K'),'320' => _t('高品质 320K')),
             '192',
@@ -140,23 +155,23 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
             _t('')
         );
         $form->addInput($t);
-        $t = new Typecho_Widget_Helper_Form_Element_Text(
+        $t = new Text(
             'api',
             null,
-            Typecho_Common::url('action/metingapi', Helper::options()->index)."?server=:server&type=:type&id=:id&auth=:auth&r=:r",
+            Common::url('action/metingapi', Helper::options()->index)."?server=:server&type=:type&id=:id&auth=:auth&r=:r",
             _t('* 云解析地址'),
             _t('示例：https://api.i-meto.com/meting/api?server=:server&type=:type&id=:id&r=:r')
         );
         $form->addInput($t);
-        $t = new Typecho_Widget_Helper_Form_Element_Text(
+        $t = new Text(
             'salt',
             null,
-            Typecho_Common::randString(32),
+            $pluginOptions->salt ?: '',
             _t('* 接口保护'),
             _t('加盐保护 API 接口不被滥用，自动生成无需设置。')
         );
         $form->addInput($t);
-        $t = new Typecho_Widget_Helper_Form_Element_Textarea(
+        $t = new Textarea(
             'cookie',
             null,
             '',
@@ -165,7 +180,7 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
         );
         $form->addInput($t);
 
-        echo '<a href="'.Typecho_Common::url('action/metingapi', Helper::options()->index).'?do=update" target="_blank"><button class="btn" style="outline: 0">' . _t('检查并更新插件'). '</button></a>';
+        echo '<a href="'.Common::url('action/metingapi', Helper::options()->index).'?do=update" target="_blank"><button class="btn" style="outline: 0">' . _t('检查并更新插件'). '</button></a>';
     }
 
     /**
@@ -175,23 +190,27 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
      */
     public static function configHandle($config, $is_init)
     {
+        if (empty($config['api'])) {
+            $config['api'] = Common::url('action/metingapi', Helper::options()->index)."?server=:server&type=:type&id=:id&auth=:auth&r=:r";
+        }
+        if (empty($config['salt'])) {
+            $config['salt'] = Common::randString(32);
+        }
+
         if (!$is_init) {
-            if (empty($config['api'])) {
-                $config['api'] = Typecho_Common::url('action/metingapi', Helper::options()->index)."?server=:server&type=:type&id=:id&auth=:auth&r=:r";
-            }
             if ($config['cachetype'] != 'none') {
                 require_once 'driver/cache.interface.php';
                 require_once 'driver/'.$config['cachetype'].'.class.php';
                 try {
-                    $cache = new MetingCache(array(
+                    $cache = new \MetingCache(array(
                         'host' => $config['cachehost'],
                         'port' => $config['cacheport']
                     ));
                     $cache->install();
                     $cache->check();
                     $cache->flush();
-                } catch (Exception $e) {
-                    throw new Typecho_Plugin_Exception(_t($e->getMessage()));
+                } catch (\Exception $e) {
+                    throw new \Typecho\Plugin\Exception(_t($e->getMessage()));
                 }
             }
         }
@@ -199,20 +218,56 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
         Helper::configPlugin('Meting', $config);
     }
 
-    public static function personalConfig(Typecho_Widget_Helper_Form $form)
+    public static function personalConfig(Form $form)
     {
     }
 
-    /**
-     * 获取插件配置面板
-     *
-     * @access public
-     * @param Typecho_Widget_Helper_Form $form 配置面板
-     * @return void
-     */
+    private static $headerLoaded = false;
+    private static $footerLoaded = false;
+
+    private static function normalizeFactoryHandle($handle)
+    {
+        if (defined('__TYPECHO_CLASS_ALIASES__')) {
+            $alias = array_search('\\' . ltrim($handle, '\\'), __TYPECHO_CLASS_ALIASES__, true);
+            if (false !== $alias) {
+                $handle = $alias;
+            }
+        }
+
+        if (class_exists('Typecho\\Common')) {
+            return Common::nativeClassName($handle);
+        }
+
+        return trim(str_replace('\\', '_', $handle), '_');
+    }
+
+    private static function registerContentsHook($component, $callback)
+    {
+        $targets = array('Widget_Abstract_Contents');
+        if (class_exists('Widget\Base\Contents')) {
+            $targets[] = 'Widget\Base\Contents';
+        }
+
+        $registered = array();
+        foreach ($targets as $target) {
+            $normalized = self::normalizeFactoryHandle($target);
+            if (isset($registered[$normalized])) {
+                continue;
+            }
+
+            \Typecho\Plugin::factory($target)->{$component} = $callback;
+            $registered[$normalized] = true;
+        }
+    }
+
     public static function header()
     {
-        $api = Typecho_Widget::widget('Widget_Options')->plugin('Meting')->api;
+        if (self::$headerLoaded) {
+            return;
+        }
+        self::$headerLoaded = true;
+
+        $api = Options::alloc()->plugin('Meting')->api;
         $dir = Helper::options()->pluginUrl.'/Meting/assets';
         $ver = METING_VERSION;
         echo "<link rel=\"stylesheet\" href=\"{$dir}/APlayer.min.css?v={$ver}\">\n";
@@ -222,6 +277,11 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
 
     public static function footer()
     {
+        if (self::$footerLoaded) {
+            return;
+        }
+        self::$footerLoaded = true;
+
         $dir = Helper::options()->pluginUrl.'/Meting/assets';
         $ver = METING_VERSION;
         echo "<script type=\"text/javascript\" src=\"{$dir}/Meting.min.js?v={$ver}\"></script>\n";
@@ -229,11 +289,11 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
 
     public static function playerReplace($data, $widget, $last)
     {
-        $text = empty($last)?$data:$last;
-        if ($widget instanceof Widget_Archive) {
+        $text = empty($last) ? $data : $last;
+        if ($widget instanceof Archive) {
             $data = $text;
             $pattern = self::get_shortcode_regex(array('Meting'));
-            $text = preg_replace_callback("/$pattern/", array('Meting_Plugin','parseCallback'), $data);
+            $text = preg_replace_callback("/$pattern/", [__CLASS__, 'parseCallback'], $data);
         }
         return $text;
     }
@@ -245,58 +305,62 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
         $pattern = self::get_shortcode_regex(array('Music'));
         preg_match_all("/$pattern/", $matches[5], $all);
         if (sizeof($all[3])) {
-            return Meting_Plugin::parseMusic($all[3], $setting);
+            return self::parseMusic($all[3], $setting);
         }
     }
 
     public static function parseMusic($matches, $setting)
     {
-        $data = array();
         $str = "";
         foreach ($matches as $vo) {
             $t = self::shortcode_parse_atts(htmlspecialchars_decode($vo));
             $player = array(
-                'theme' => Typecho_Widget::widget('Widget_Options')->plugin('Meting')->theme?:'red',
-                'preload' => Typecho_Widget::widget('Widget_Options')->plugin('Meting')->preload?:'auto',
-                'autoplay' => Typecho_Widget::widget('Widget_Options')->plugin('Meting')->autoplay?:'false',
-                'listMaxHeight' => Typecho_Widget::widget('Widget_Options')->plugin('Meting')->height?:'340px',
-                'order' => Typecho_Widget::widget('Widget_Options')->plugin('Meting')->order?:'list',
+                'theme' => Options::alloc()->plugin('Meting')->theme ?: 'red',
+                'preload' => Options::alloc()->plugin('Meting')->preload ?: 'auto',
+                'autoplay' => Options::alloc()->plugin('Meting')->autoplay ?: 'false',
+                'list-max-height' => Options::alloc()->plugin('Meting')->height ?: '340px',
+                'order' => Options::alloc()->plugin('Meting')->order ?: 'list',
             );
             if (isset($t['server'])) {
-                if (!in_array($t['server'], array('netease','tencent','xiami','baidu','kugou'))) {
+                if (!isset($t['type'], $t['id'])) {
                     continue;
                 }
-                if (!in_array($t['type'], array('search','album','playlist','artist','song'))) {
+                if (!in_array($t['server'], array('netease', 'tencent', 'kugou', 'baidu', 'kuwo'), true)) {
+                    continue;
+                }
+                if (!in_array($t['type'], array('search', 'album', 'playlist', 'artist', 'song'), true)) {
                     continue;
                 }
                 $data = $t;
 
-                $salt = Typecho_Widget::widget('Widget_Options')->plugin('Meting')->salt;
+                $salt = Options::alloc()->plugin('Meting')->salt;
                 $auth = md5($salt.$data['server'].$data['type'].$data['id'].$salt);
 
-                $str .= "<div class=\"aplayer\" data-id=\"{$data['id']}\" data-server=\"{$data['server']}\" data-type=\"{$data['type']}\" data-auth=\"{$auth}\"";
+                $str .= "<meting-js server=\"{$data['server']}\" type=\"{$data['type']}\" id=\"{$data['id']}\" auth=\"{$auth}\"";
                 if (is_array($setting)) {
                     foreach ($setting as $key => $vo) {
-                        $player[$key] = $vo;
+                        $attr = strtolower(preg_replace('/([A-Z])/', '-$1', $key));
+                        $player[$attr] = $vo;
                     }
                 }
                 foreach ($player as $key => $vo) {
-                    $str .= " data-{$key}=\"{$vo}\"";
+                    $str .= " {$key}=\"{$vo}\"";
                 }
-                $str .= "></div>\n";
+                $str .= "></meting-js>\n";
             } else {
                 $data = $t;
 
-                $str .= "<div class=\"aplayer\" data-name=\"{$data['title']}\" data-artist=\"{$data['author']}\" data-url=\"{$data['url']}\" data-cover=\"{$data['pic']}\" data-lrc=\"{$data['lrc']}\"";
+                $str .= "<meting-js name=\"{$data['title']}\" artist=\"{$data['author']}\" url=\"{$data['url']}\" cover=\"{$data['pic']}\" lrc=\"{$data['lrc']}\"";
                 if (is_array($setting)) {
                     foreach ($setting as $key => $vo) {
-                        $player[$key] = $vo;
+                        $attr = strtolower(preg_replace('/([A-Z])/', '-$1', $key));
+                        $player[$attr] = $vo;
                     }
                 }
                 foreach ($player as $key => $vo) {
-                    $str .= " data-{$key}=\"{$vo}\"";
+                    $str .= " {$key}=\"{$vo}\"";
                 }
-                $str .= "></div>\n";
+                $str .= "></meting-js>\n";
             }
         }
         return $str;
@@ -304,7 +368,7 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
 
     public static function addButton()
     {
-        $url = Typecho_Common::url('action/metingapi', Helper::options()->index).'?do=parse';
+        $url = Common::url('action/metingapi', Helper::options()->index).'?do=parse';
         $dir = Helper::options()->pluginUrl.'/Meting/assets/editer.js?v='.METING_VERSION;
         echo "<script>var murl='{$url}';</script>
               <script type=\"text/javascript\" src=\"{$dir}\"></script>";
@@ -353,10 +417,10 @@ class Meting_Plugin extends Typecho_Widget implements Typecho_Plugin_Interface
     public static function installCheck()
     {
         if (!extension_loaded('curl')) {
-            throw new Typecho_Plugin_Exception(_t('缺少 cURL 拓展'));
+            throw new \Typecho\Plugin\Exception(_t('缺少 cURL 拓展'));
         }
         if (!(extension_loaded('openssl') || extension_loaded('mcrypt'))) {
-            throw new Typecho_Plugin_Exception(_t('缺少 openssl/mcrypt 拓展'));
+            throw new \Typecho\Plugin\Exception(_t('缺少 openssl/mcrypt 拓展'));
         }
     }
 }

@@ -1,10 +1,22 @@
 <?php
+
+namespace TypechoPlugin\Meting;
+
+use Typecho\Common;
+use Typecho\Widget;
+use Utils\Helper;
+use Widget\ActionInterface;
+use Widget\Options;
+
 if (!defined('__TYPECHO_ROOT_DIR__')) {
     exit;
 }
 
-class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
+class Action extends Widget implements ActionInterface
 {
+    private const SUPPORTED_SERVERS = array('netease', 'tencent', 'kugou', 'baidu', 'kuwo');
+    private const SUPPORTED_TYPES = array('song', 'album', 'search', 'artist', 'playlist', 'lrc', 'url', 'pic');
+
     public function execute()
     {
     }
@@ -18,10 +30,10 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function check($server, $type, $id)
     {
-        if (!in_array($server, array('netease','tencent','baidu','xiami','kugou'))) {
+        if (!in_array($server, self::SUPPORTED_SERVERS, true)) {
             return false;
         }
-        if (!in_array($type, array('song','album','search','artist','playlist','lrc','url','pic'))) {
+        if (!in_array($type, self::SUPPORTED_TYPES, true)) {
             return false;
         }
         if (empty($id)) {
@@ -30,18 +42,62 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
         return true;
     }
 
+    private function isDebug()
+    {
+        return defined('__TYPECHO_DEBUG__') && __TYPECHO_DEBUG__;
+    }
+
+    private function debugLog($server, $type, $id, $message)
+    {
+        if (!$this->isDebug()) {
+            return;
+        }
+
+        error_log(sprintf(
+            '[Meting] server=%s type=%s id=%s %s',
+            (string) $server,
+            (string) $type,
+            (string) $id,
+            $message
+        ));
+    }
+
+    private function sendJson($data, $status = 200)
+    {
+        http_response_code($status);
+        header('Content-Type: application/json; charset=UTF-8');
+        echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    private function decodeJson($payload, $server, $type, $id)
+    {
+        $data = json_decode($payload, true);
+        if (!is_array($data)) {
+            $this->debugLog($server, $type, $id, 'invalid JSON response');
+            return array();
+        }
+
+        return $data;
+    }
+
+    private function buildAuth($salt, $server, $type, $id)
+    {
+        return md5($salt . $server . $type . $id . $salt);
+    }
+
     private function api()
     {
         // 参数检查
         $this->filterReferer();
 
-        $server = $this->request->get('server');
-        $type = $this->request->get('type');
-        $id = $this->request->get('id');
+        $server = trim((string) $this->request->get('server'));
+        $type = trim((string) $this->request->get('type'));
+        $id = trim((string) $this->request->get('id'));
 
         if (!$this->check($server, $type, $id)) {
-            http_response_code(403);
-            die();
+            $this->debugLog($server, $type, $id, 'request rejected by whitelist check');
+            $this->sendJson(array(), 403);
+            return;
         }
 
         // 加载 Meting 模块
@@ -50,20 +106,20 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
         }
         $api = new \Metowolf\Meting($server);
         $api->format(true);
-        $cookie = Typecho_Widget::widget('Widget_Options')->plugin('Meting')->cookie;
+        $cookie = Options::alloc()->plugin('Meting')->cookie;
         if ($server == 'netease' && !empty($cookie)) {
             $api->cookie($cookie);
         }
 
         // 加载 Meting Cache 模块
         if (!extension_loaded('MetingCache')) {
-            $cachetype = Typecho_Widget::widget('Widget_Options')->plugin('Meting')->cachetype;
+            $cachetype = Options::alloc()->plugin('Meting')->cachetype;
             if ($cachetype != 'none') {
-                $cachehost = Typecho_Widget::widget('Widget_Options')->plugin('Meting')->cachehost;
-                $cacheport = Typecho_Widget::widget('Widget_Options')->plugin('Meting')->cacheport;
+                $cachehost = Options::alloc()->plugin('Meting')->cachehost;
+                $cacheport = Options::alloc()->plugin('Meting')->cacheport;
                 include_once 'driver/cache.interface.php';
                 include_once 'driver/'.$cachetype.'.class.php';
-                $this->cache = new MetingCache(array(
+                $this->cache = new \MetingCache(array(
                     'host' => $cachehost,
                     'port' => $cacheport
                 ));
@@ -72,14 +128,15 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
 
         // auth 验证
         $EID = $server.$type.$id;
-        $salt = Typecho_Widget::widget('Widget_Options')->plugin('Meting')->salt;
+        $salt = Options::alloc()->plugin('Meting')->salt;
 
         if (!empty($salt)) {
             $auth1 = md5($salt.$EID.$salt);
-            $auth2 = $this->request->get('auth');
+            $auth2 = (string) $this->request->get('auth');
             if (strcmp($auth1, $auth2)) {
-                http_response_code(403);
-                die();
+                $this->debugLog($server, $type, $id, 'auth mismatch');
+                $this->sendJson(array(), 403);
+                return;
             }
         }
 
@@ -90,13 +147,20 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
                 $data = $api->lyric($id);
                 $this->cacheWrite($EID, $data, 86400);
             }
-            $data = json_decode($data, true);
-            header("Content-Type: application/javascript");
-            if (!empty($data['tlyric'])) {
-                echo $this->lrctran($data['lyric'], $data['tlyric']);
-            } else {
-                echo $data['lyric'];
+            $data = $this->decodeJson($data, $server, $type, $id);
+            header('Content-Type: text/plain; charset=UTF-8');
+            if (empty($data)) {
+                echo '[]';
+                return;
             }
+
+            if (!empty($data['tlyric']) && !empty($data['lyric'])) {
+                echo $this->lrctran($data['lyric'], $data['tlyric']);
+                return;
+            }
+
+            echo isset($data['lyric']) ? $data['lyric'] : '[]';
+            return;
         }
 
         // 专辑图片解析
@@ -106,20 +170,29 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
                 $data = $api->pic($id, 90);
                 $this->cacheWrite($EID, $data, 86400);
             }
-            $data = json_decode($data, true);
+            $data = $this->decodeJson($data, $server, $type, $id);
+            if (empty($data['url'])) {
+                $this->debugLog($server, $type, $id, 'cover url missing');
+                http_response_code(404);
+                header('Content-Type: text/plain; charset=UTF-8');
+                echo '[]';
+                return;
+            }
+
             $this->response->redirect($data['url']);
+            return;
         }
 
         // 歌曲链接解析
         if ($type == 'url') {
             $data = $this->cacheRead($EID);
             if (empty($data)) {
-                $rate = Typecho_Widget::widget('Widget_Options')->plugin('Meting')->bitrate;
+                $rate = Options::alloc()->plugin('Meting')->bitrate;
                 $data = $api->url($id, $rate);
                 $this->cacheWrite($EID, $data, 1200);
             }
-            $data = json_decode($data, true);
-            $url = $data['url'];
+            $data = $this->decodeJson($data, $server, $type, $id);
+            $url = isset($data['url']) ? $data['url'] : '';
 
             if ($server == 'netease') {
                 $url = str_replace('://m7c.', '://m7.', $url);
@@ -129,21 +202,19 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
                 $url = str_replace('http://m10.', 'https://m10.', $url);
             }
 
-            if ($server == 'xiami') {
-                $url = str_replace('http://', 'https://', $url);
-            }
-
             if ($server == 'baidu') {
                 $url = str_replace('http://zhangmenshiting.qianqian.com', 'https://gss3.baidu.com/y0s1hSulBw92lNKgpU_Z2jR7b2w6buu', $url);
             }
 
             if (empty($url)) {
+                $this->debugLog($server, $type, $id, 'song url missing, using fallback');
                 $url = 'https://coding.meting.api.i-meto.com/empty.mp3';
                 if ($server == 'netease') {
                     $url = 'https://music.163.com/song/media/outer/url?id='.$id.'.mp3';
                 }
             }
             $this->response->redirect($url);
+            return;
         }
 
         // 其它类别解析
@@ -153,21 +224,39 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
                 $data = $api->$type($id);
                 $this->cacheWrite($EID, $data, 7200);
             }
-            $data = json_decode($data, 1);
-            $url = Typecho_Common::url('action/metingapi', Helper::options()->index);
+            $data = $this->decodeJson($data, $server, $type, $id);
+            $url = Common::url('action/metingapi', Helper::options()->index);
+
+            if (!is_array($data)) {
+                $this->sendJson(array());
+                return;
+            }
 
             $music = array();
             foreach ($data as $vo) {
+                if (!is_array($vo) || empty($vo['source']) || empty($vo['url_id'])) {
+                    continue;
+                }
+
+                $artist = array();
+                if (isset($vo['artist'])) {
+                    $artist = is_array($vo['artist']) ? $vo['artist'] : array($vo['artist']);
+                }
+
                 $music[] = array(
-                    'name'   => $vo['name'],
-                    'artist' => implode(' / ', $vo['artist']),
-                    'url'    => $url.'?server='.$vo['source'].'&type=url&id='.$vo['url_id'].'&auth='.md5($salt.$vo['source'].'url'.$vo['url_id'].$salt),
-                    'cover'  => $url.'?server='.$vo['source'].'&type=pic&id='.$vo['pic_id'].'&auth='.md5($salt.$vo['source'].'pic'.$vo['pic_id'].$salt),
-                    'lrc'    => $url.'?server='.$vo['source'].'&type=lrc&id='.$vo['lyric_id'].'&auth='.md5($salt.$vo['source'].'lrc'.$vo['lyric_id'].$salt),
+                    'name'   => isset($vo['name']) ? $vo['name'] : '',
+                    'artist' => implode(' / ', $artist),
+                    'url'    => $url.'?server='.$vo['source'].'&type=url&id='.$vo['url_id'].'&auth='.$this->buildAuth($salt, $vo['source'], 'url', $vo['url_id']),
+                    'cover'  => $url.'?server='.$vo['source'].'&type=pic&id='.$vo['pic_id'].'&auth='.$this->buildAuth($salt, $vo['source'], 'pic', $vo['pic_id']),
+                    'lrc'    => $url.'?server='.$vo['source'].'&type=lrc&id='.$vo['lyric_id'].'&auth='.$this->buildAuth($salt, $vo['source'], 'lrc', $vo['lyric_id']),
                 );
             }
-            header("Content-Type: application/javascript");
-            echo json_encode($music);
+            if (empty($music) && !empty($data)) {
+                $this->debugLog($server, $type, $id, 'decoded list payload did not contain playable entries');
+            }
+
+            $this->sendJson($music);
+            return;
         }
     }
 
@@ -207,22 +296,6 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
             } elseif (preg_match('/singer\/([^\.]*)/i', $url, $id)) {
                 list($id, $type) = array($id[1],'artist');
             }
-        } elseif (strpos($url, 'xiami.com') !== false) {
-            $server = 'xiami';
-            if (preg_match('/collect\/(\w+)/i', $url, $id)) {
-                list($id, $type) = array($id[1],'playlist');
-            } elseif (preg_match('/album\/(\w+)/i', $url, $id)) {
-                list($id, $type) = array($id[1],'album');
-            } elseif (preg_match('/[\/.]\w+\/[songdem]+\/(\w+)/i', $url, $id)) {
-                list($id, $type) = array($id[1],'song');
-            } elseif (preg_match('/artist\/(\w+)/i', $url, $id)) {
-                list($id, $type) = array($id[1],'artist');
-            }
-            if (!preg_match('/^\d*$/i', $id, $t)) {
-                $data = self::curl($url);
-                preg_match('/'.$type.'\/(\d+)/i', $data, $id);
-                $id = $id[1];
-            }
         } elseif (strpos($url, 'kugou.com') !== false) {
             $server = 'kugou';
             if (preg_match('/special\/single\/(\d+)/i', $url, $id)) {
@@ -244,6 +317,17 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
                 list($id, $type) = array($id[1],'song');
             } elseif (preg_match('/artist\/(\d+)/i', $url, $id)) {
                 list($id, $type) = array($id[1],'artist');
+            }
+        } elseif (strpos($url, 'kuwo.cn') !== false) {
+            $server = 'kuwo';
+            if (preg_match('/playlist_detail\/(\d+)/i', $url, $id)) {
+                list($id, $type) = array($id[1], 'playlist');
+            } elseif (preg_match('/play_detail\/(\d+)/i', $url, $id)) {
+                list($id, $type) = array($id[1], 'song');
+            } elseif (preg_match('/album_detail\/(\d+)/i', $url, $id)) {
+                list($id, $type) = array($id[1], 'album');
+            } elseif (preg_match('/singer_detail\/(\d+)/i', $url, $id)) {
+                list($id, $type) = array($id[1], 'artist');
             }
         } else {
             die("[Meting]\n[Music title=\"歌曲名\" author=\"歌手\" url=\"{$url}\" pic=\"图片文件URL\" lrc=\"歌词文件URL\"/]\n[/Meting]\n");
@@ -304,23 +388,18 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function update()
     {
-        $isAdmin = call_user_func(function () {
-            $hasLogin = $this->widget('Widget_User')->hasLogin();
-            $isAdmin = false;
-            if (!$hasLogin) {
-                return false;
-            }
-            $isAdmin = $this->widget('Widget_User')->pass('administrator', true);
-            return $isAdmin;
-        }, $this);
-
+        $hasLogin = \Widget\User::alloc()->hasLogin();
+        if (!$hasLogin) {
+            die('Forbidden!');
+        }
+        $isAdmin = \Widget\User::alloc()->pass('administrator', true);
         if (!$isAdmin) {
             die('Forbidden!');
         }
 
         header("Content-Type: text/plain; charset=UTF-8");
 
-        $shasum = $this->curl('https://raw.githubusercontent.com/MoePlayer/APlayer-Typecho/master/shasum.txt');
+        $shasum = $this->curl('https://raw.githubusercontent.com/mikusaa/Typecho-Plugin-APlayer/master/shasum.txt');
 
         echo "获取最新特征库...\n";
         echo $shasum."\n\n";
@@ -335,7 +414,7 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
             if (!file_exists(__DIR__.'/'.$filename) ||
                 !hash_equals(hash('sha256', file_get_contents(__DIR__.'/'.$filename)), $remote_sha256)) {
                 echo "下载     ".$filename;
-                $url = 'https://raw.githubusercontent.com/MoePlayer/APlayer-Typecho/master'.substr($filename, 1);
+                $url = 'https://raw.githubusercontent.com/mikusaa/Typecho-Plugin-APlayer/master'.substr($filename, 1);
 
                 if (file_put_contents(__DIR__.'/'.$filename, $this->curl($url))) {
                     echo " (OK)\n";
@@ -380,16 +459,48 @@ class Meting_Action extends Typecho_Widget implements Widget_Interface_Do
         return $this->cache->get($k);
     }
 
+    private function getCurrentOriginParts()
+    {
+        $scheme = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off') ? 'https' : 'http';
+        $host = isset($_SERVER['HTTP_HOST']) ? (string) $_SERVER['HTTP_HOST'] : '';
+        $parts = parse_url($scheme . '://' . $host);
+
+        return array(
+            'scheme' => isset($parts['scheme']) ? strtolower((string) $parts['scheme']) : $scheme,
+            'host'   => isset($parts['host']) ? strtolower((string) $parts['host']) : strtolower((string) $_SERVER['SERVER_NAME']),
+            'port'   => isset($parts['port']) ? intval($parts['port']) : intval(isset($_SERVER['SERVER_PORT']) ? $_SERVER['SERVER_PORT'] : ($scheme === 'https' ? 443 : 80)),
+        );
+    }
+
+    private function isSameOriginReferer($referer)
+    {
+        $refererParts = parse_url((string) $referer);
+        if (empty($refererParts['host'])) {
+            return false;
+        }
+
+        $current = $this->getCurrentOriginParts();
+        $refererScheme = isset($refererParts['scheme']) ? strtolower((string) $refererParts['scheme']) : $current['scheme'];
+        $refererHost = strtolower((string) $refererParts['host']);
+        $refererPort = isset($refererParts['port']) ? intval($refererParts['port']) : ($refererScheme === 'https' ? 443 : 80);
+
+        return $refererScheme === $current['scheme']
+            && $refererHost === $current['host']
+            && $refererPort === $current['port'];
+    }
+
     private function filterReferer()
     {
-        $salt = Typecho_Widget::widget('Widget_Options')->plugin('Meting')->salt;
+        $salt = Options::alloc()->plugin('Meting')->salt;
         if (empty($salt)) {
             header("Access-Control-Allow-Origin: *");
             header("Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Connection, User-Agent, Cookie");
             return;
         }
-        if (isset($_SERVER['HTTP_REFERER']) && parse_url($_SERVER['HTTP_REFERER'], PHP_URL_HOST) !== $_SERVER['HTTP_HOST']) {
+        if (isset($_SERVER['HTTP_REFERER']) && !$this->isSameOriginReferer($_SERVER['HTTP_REFERER'])) {
+            $this->debugLog('', '', '', 'referer rejected: ' . $_SERVER['HTTP_REFERER']);
             http_response_code(403);
+            header('Content-Type: application/json; charset=UTF-8');
             die('[]');
         }
     }

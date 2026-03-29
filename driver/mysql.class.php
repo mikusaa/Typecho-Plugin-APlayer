@@ -4,7 +4,7 @@ class MetingCache implements MetingCacheI
     private $db = null;
     public function __construct($option)
     {
-        $this->db = Typecho_Db::get();
+        $this->db = \Typecho\Db::get();
         $dbname = $this->db->getPrefix() . 'metingcache';
         $sql = "SHOW TABLES LIKE '%" . $dbname . "%'";
         if (count($this->db->fetchAll($sql)) == 0) {
@@ -25,7 +25,7 @@ CREATE TABLE `%dbname%` (
 ) ENGINE=MyISAM DEFAULT CHARSET=%charset%';
         $dbname = $this->db->getPrefix() . 'metingcache';
         $search = array('%dbname%', '%charset%');
-        $replace = array($dbname, str_replace('UTF-8', 'utf8', Helper::options()->charset));
+        $replace = array($dbname, str_replace('UTF-8', 'utf8', \Utils\Helper::options()->charset));
 
         $sql = str_replace($search, $replace, $sql);
         $sqls = explode(';', $sql);

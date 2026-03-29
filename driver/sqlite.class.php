@@ -4,7 +4,7 @@ class MetingCache implements MetingCacheI
     private $db = null;
     public function __construct($option)
     {
-        $this->db = Typecho_Db::get();
+        $this->db = \Typecho\Db::get();
         $dbname = $this->db->getPrefix() . 'metingcache';
         $sql = "SELECT name FROM sqlite_master WHERE type='table' AND name= '" . $dbname . "'";
         if (count($this->db->fetchAll($sql)) == 0) {
