@@ -72,7 +72,12 @@ class Plugin implements PluginInterface
      */
     public static function config(Form $form)
     {
-        $pluginOptions = Options::alloc()->plugin('Meting');
+        $pluginOptions = null;
+        try {
+            $pluginOptions = Options::alloc()->plugin('Meting');
+        } catch (\Throwable $e) {
+            $pluginOptions = null;
+        }
 
         $t = new Text(
             'theme',
@@ -166,7 +171,7 @@ class Plugin implements PluginInterface
         $t = new Text(
             'salt',
             null,
-            $pluginOptions->salt ?: '',
+            ($pluginOptions && !empty($pluginOptions->salt)) ? $pluginOptions->salt : '',
             _t('* 接口保护'),
             _t('加盐保护 API 接口不被滥用，自动生成无需设置。')
         );
